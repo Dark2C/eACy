@@ -1,0 +1,18 @@
+{
+  "accessControlSystems": [
+    {
+      "id": 1,
+      "name": "Ufficio"
+    }
+  ],
+  "cards": [
+    {
+      "uid": "91273000",
+      "counter": 1,
+      "enabled": true,
+      "allowedSystems": [
+        1
+      ]
+    }
+  ]
+}
