@@ -110,15 +110,12 @@ function device_endpoint(int $deviceId, bool $pretty = true): string
 {
     $host = $_SERVER['HTTP_HOST'] ?? 'example.org';
     $base = request_base_path();
-    $key = DEVICE_API_KEY !== '' ? '?key=' . rawurlencode(DEVICE_API_KEY) : '';
 
     if ($pretty) {
-        return 'http://' . $host . $base . '/api/' . $deviceId . $key;
+        return 'http://' . $host . $base . '/api/' . $deviceId;
     }
 
-    $separator = DEVICE_API_KEY !== '' ? '&' : '';
-    $keyPart = DEVICE_API_KEY !== '' ? $separator . 'key=' . rawurlencode(DEVICE_API_KEY) : '';
-    return 'http://' . $host . $base . '/api/device.php?id=' . $deviceId . $keyPart;
+    return 'http://' . $host . $base . '/api/device.php?id=' . $deviceId;
 }
 
 function system_log(string $level, string $source, string $message, ?int $accessPointId = null, ?string $badgeUid = null, array $context = []): void
@@ -148,44 +145,23 @@ function create_anomaly(
     ?int $accessPointId = null,
     ?int $badgeId = null,
     ?string $badgeUid = null,
-    array $fingerprintParts = []
+    array $fingerprintParts = [],
+    ?string $occurredAt = null
 ): void {
     $fingerprint = sha1(implode('|', array_merge([
         $type,
         (string)$accessPointId,
         (string)$badgeUid,
-    ], $fingerprintParts)));
-    $now = date('Y-m-d H:i:s');
+    ], array_map('strval', $fingerprintParts))));
+    $occurredAt ??= date('Y-m-d H:i:s');
 
-    $find = db()->prepare(
-        'SELECT id FROM ' . table_name('anomalies') . ' WHERE fingerprint = ? ORDER BY id LIMIT 1 FOR UPDATE'
-    );
-    $find->execute([$fingerprint]);
-    $existingId = $find->fetchColumn();
-
-    if ($existingId !== false) {
-        $sql = 'UPDATE ' . table_name('anomalies') . '
-                SET access_point_id = ?, badge_id = ?, badge_uid = ?, type = ?, severity = ?, message = ?,
-                    status = "OPEN", last_seen_at = ?, occurrences = occurrences + 1,
-                    resolved_at = NULL, resolved_by = NULL
-                WHERE id = ?';
-        db()->prepare($sql)->execute([
-            $accessPointId,
-            $badgeId,
-            $badgeUid,
-            $type,
-            strtoupper($severity),
-            $message,
-            $now,
-            (int)$existingId,
-        ]);
-        return;
-    }
-
+    // La fingerprint identifica un singolo evento o episodio. Il replay della
+    // stessa evidenza non deve incrementare contatori né riaprire un alert risolto.
     $sql = 'INSERT INTO ' . table_name('anomalies') . '
             (access_point_id, badge_id, badge_uid, type, severity, message, fingerprint, status,
-             first_seen_at, last_seen_at, occurrences)
-            VALUES (?, ?, ?, ?, ?, ?, ?, "OPEN", ?, ?, 1)';
+             first_seen_at, last_seen_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, "OPEN", ?, ?)
+            ON DUPLICATE KEY UPDATE id = id';
     db()->prepare($sql)->execute([
         $accessPointId,
         $badgeId,
@@ -194,8 +170,8 @@ function create_anomaly(
         strtoupper($severity),
         $message,
         $fingerprint,
-        $now,
-        $now,
+        $occurredAt,
+        $occurredAt,
     ]);
 }
 

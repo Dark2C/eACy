@@ -22,9 +22,12 @@ $flashes = consume_flashes();
 <body>
 <nav class="navbar navbar-expand-lg navbar-dark app-navbar sticky-top">
     <div class="container-fluid px-lg-4">
-        <a class="navbar-brand fw-semibold" href="index.php">
-            <span class="brand-mark"><i class="bi bi-shield-check"></i></span>
-            <?= e(APP_NAME) ?>
+        <a class="navbar-brand app-brand" href="index.php" aria-label="<?= e(APP_NAME) ?>">
+            <img
+                class="navbar-logo"
+                src="assets/logo.svg?v=<?= rawurlencode((string)@filemtime(__DIR__ . '/../assets/logo.svg')) ?>"
+                alt=""
+            >
         </a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav">
             <span class="navbar-toggler-icon"></span>

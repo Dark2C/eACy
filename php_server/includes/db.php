@@ -55,22 +55,61 @@ function db(): PDO
     return $pdo;
 }
 
-function database_has_table(PDO $pdo, string $fullTableName): bool
+/**
+ * @param string[] $fullTableNames
+ */
+function database_has_tables(PDO $pdo, array $fullTableNames): bool
 {
+    $fullTableNames = array_values(array_unique($fullTableNames));
+    if (!$fullTableNames) {
+        return false;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($fullTableNames), '?'));
     $stmt = $pdo->prepare(
         'SELECT COUNT(*)
          FROM information_schema.tables
-         WHERE table_schema = DATABASE() AND table_name = ?'
+         WHERE table_schema = DATABASE() AND table_name IN (' . $placeholders . ')'
     );
-    $stmt->execute([$fullTableName]);
+    $stmt->execute($fullTableNames);
 
-    return (int)$stmt->fetchColumn() > 0;
+    return (int)$stmt->fetchColumn() === count($fullTableNames);
+}
+
+function application_table_names(string $prefix): array
+{
+    if (!preg_match('/^[A-Za-z0-9_]*$/', $prefix)) {
+        throw new RuntimeException('Prefisso tabelle non valido.');
+    }
+
+    return array_map(static function (string $name) use ($prefix): string {
+        return $prefix . $name;
+    }, [
+        'users',
+        'directory_users',
+        'access_points',
+        'badges',
+        'badge_access',
+        'access_events',
+        'anomalies',
+        'system_logs',
+    ]);
+}
+
+function application_is_installed(PDO $pdo, string $prefix): bool
+{
+    if (!database_has_tables($pdo, application_table_names($prefix))) {
+        return false;
+    }
+
+    $usersTable = '`' . $prefix . 'users`';
+    return (int)$pdo->query('SELECT COUNT(*) FROM ' . $usersTable)->fetchColumn() > 0;
 }
 
 function app_is_installed(): bool
 {
     try {
-        return database_has_table(db(), raw_table_name('app_meta'));
+        return application_is_installed(db(), TABLE_PREFIX);
     } catch (Throwable $e) {
         return false;
     }

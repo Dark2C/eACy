@@ -16,17 +16,6 @@ body {
     box-shadow: 0 8px 24px rgba(20, 33, 61, .18);
 }
 
-.brand-mark {
-    display: inline-grid;
-    place-items: center;
-    width: 2rem;
-    height: 2rem;
-    margin-right: .45rem;
-    border-radius: .7rem;
-    color: #fff;
-    background: rgba(255,255,255,.15);
-}
-
 .navbar .nav-link {
     border-radius: .65rem;
     padding-left: .8rem !important;
@@ -94,7 +83,6 @@ body {
 
 .status-online { background: #20c997; box-shadow: 0 0 0 .2rem rgba(32,201,151,.12); }
 .status-offline { background: #adb5bd; }
-.status-disabled { background: #dc3545; }
 
 .activity-item {
     position: relative;
@@ -176,4 +164,38 @@ body {
 
 [data-assignee-select] {
     min-height: 2.8rem;
+}
+
+/* Brand */
+.app-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: .7rem;
+    margin-right: 1.25rem;
+    padding-top: .25rem;
+    padding-bottom: .25rem;
+    white-space: nowrap;
+}
+
+.navbar-logo {
+    display: block;
+    width: 5.6rem;
+    height: 2.65rem;
+    object-fit: contain;
+    filter: brightness(0) invert(1);
+}
+
+.login-logo {
+    display: block;
+    width: min(17rem, 82%);
+    height: auto;
+    margin-right: auto;
+    margin-left: auto;
+}
+
+@media (max-width: 575.98px) {
+    .navbar-logo {
+        width: 4.8rem;
+        height: 2.3rem;
+    }
 }

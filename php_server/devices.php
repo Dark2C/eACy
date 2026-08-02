@@ -16,36 +16,29 @@ if (is_post()) {
             $name = trim($_POST['name'] ?? '');
             $location = trim($_POST['location'] ?? '');
             $description = trim($_POST['description'] ?? '');
-            $enabled = isset($_POST['enabled']) ? 1 : 0;
 
             if ($name === '') {
                 throw new RuntimeException('Il nome del varco è obbligatorio.');
             }
 
             if ($id > 0) {
-                $sql = 'UPDATE ' . table_name('access_points') . ' SET name=?, location=?, description=?, enabled=?, updated_at=? WHERE id=?';
-                db()->prepare($sql)->execute([$name, $location, $description, $enabled, date('Y-m-d H:i:s'), $id]);
+                $sql = 'UPDATE ' . table_name('access_points') . ' SET name=?, location=?, description=?, updated_at=? WHERE id=?';
+                db()->prepare($sql)->execute([$name, $location, $description, date('Y-m-d H:i:s'), $id]);
                 system_log('INFO', 'ADMIN', 'Varco aggiornato: ' . $name, $id);
                 flash('success', 'Varco aggiornato.');
             } else {
                 if ($customId > 0) {
-                    $sql = 'INSERT INTO ' . table_name('access_points') . ' (id, name, location, description, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)';
-                    db()->prepare($sql)->execute([$customId, $name, $location, $description, $enabled, date('Y-m-d H:i:s'), date('Y-m-d H:i:s')]);
+                    $sql = 'INSERT INTO ' . table_name('access_points') . ' (id, name, location, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)';
+                    db()->prepare($sql)->execute([$customId, $name, $location, $description, date('Y-m-d H:i:s'), date('Y-m-d H:i:s')]);
                     $newId = $customId;
                 } else {
-                    $sql = 'INSERT INTO ' . table_name('access_points') . ' (name, location, description, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)';
-                    db()->prepare($sql)->execute([$name, $location, $description, $enabled, date('Y-m-d H:i:s'), date('Y-m-d H:i:s')]);
+                    $sql = 'INSERT INTO ' . table_name('access_points') . ' (name, location, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)';
+                    db()->prepare($sql)->execute([$name, $location, $description, date('Y-m-d H:i:s'), date('Y-m-d H:i:s')]);
                     $newId = (int)db()->lastInsertId();
                 }
                 system_log('INFO', 'ADMIN', 'Varco creato: ' . $name, $newId);
                 flash('success', 'Varco creato con ID ' . $newId . '.');
             }
-        } elseif ($action === 'toggle') {
-            $id = (int)$_POST['id'];
-            db()->prepare('UPDATE ' . table_name('access_points') . ' SET enabled = NOT enabled, updated_at = ? WHERE id = ?')
-                ->execute([date('Y-m-d H:i:s'), $id]);
-            system_log('WARNING', 'ADMIN', 'Stato del varco modificato.', $id);
-            flash('success', 'Stato del varco modificato.');
         } elseif ($action === 'delete') {
             $id = (int)$_POST['id'];
             db()->prepare('DELETE FROM ' . table_name('access_points') . ' WHERE id = ?')->execute([$id]);
@@ -98,10 +91,6 @@ require __DIR__ . '/includes/header.php';
                     <div><label class="form-label">Nome</label><input class="form-control" name="name" required value="<?= e($editDevice['name'] ?? '') ?>" placeholder="Es. Ufficio"></div>
                     <div><label class="form-label">Posizione</label><input class="form-control" name="location" value="<?= e($editDevice['location'] ?? '') ?>" placeholder="Es. Ingresso principale"></div>
                     <div><label class="form-label">Descrizione</label><textarea class="form-control" name="description" rows="3"><?= e($editDevice['description'] ?? '') ?></textarea></div>
-                    <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" name="enabled" id="enabled" <?= !isset($editDevice['enabled']) || $editDevice['enabled'] ? 'checked' : '' ?>>
-                        <label class="form-check-label" for="enabled">Varco attivo</label>
-                    </div>
                     <div class="d-flex gap-2">
                         <button class="btn btn-primary flex-grow-1"><i class="bi bi-check2"></i> Salva</button>
                         <?php if ($editDevice): ?><a class="btn btn-outline-secondary" href="devices.php">Annulla</a><?php endif; ?>
@@ -117,7 +106,7 @@ require __DIR__ . '/includes/header.php';
         <?php else: ?>
             <div class="vstack gap-3">
             <?php foreach ($devices as $device):
-                $online = $device['enabled'] && $device['last_seen_at'] && $device['last_seen_at'] >= $onlineSince;
+                $online = $device['last_seen_at'] && $device['last_seen_at'] >= $onlineSince;
                 $endpoint = device_endpoint((int)$device['id']);
             ?>
                 <div class="card">
@@ -131,8 +120,7 @@ require __DIR__ . '/includes/header.php';
                                 <div class="text-secondary small"><?= e($device['location'] ?: 'Posizione non specificata') ?></div>
                             </div>
                             <div>
-                                <?php if (!$device['enabled']): ?><span class="badge text-bg-danger">Disattivato</span>
-                                <?php elseif ($online): ?><span class="badge text-bg-success">Online</span>
+                                <?php if ($online): ?><span class="badge text-bg-success">Online</span>
                                 <?php else: ?><span class="badge text-bg-secondary">Offline</span><?php endif; ?>
                             </div>
                         </div>
@@ -152,10 +140,6 @@ require __DIR__ . '/includes/header.php';
 
                         <div class="d-flex flex-wrap gap-2 mt-3">
                             <a class="btn btn-sm btn-outline-primary" href="devices.php?edit=<?= (int)$device['id'] ?>"><i class="bi bi-pencil"></i> Modifica</a>
-                            <form method="post">
-                                <?= csrf_field() ?><input type="hidden" name="action" value="toggle"><input type="hidden" name="id" value="<?= (int)$device['id'] ?>">
-                                <button class="btn btn-sm btn-outline-warning"><i class="bi bi-power"></i> <?= $device['enabled'] ? 'Disattiva' : 'Attiva' ?></button>
-                            </form>
                             <form method="post">
                                 <?= csrf_field() ?><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?= (int)$device['id'] ?>">
                                 <button class="btn btn-sm btn-outline-danger" data-confirm="Eliminare il varco e le sue associazioni? Gli eventi storici rimarranno senza collegamento."><i class="bi bi-trash"></i> Elimina</button>

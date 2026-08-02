@@ -2,22 +2,12 @@
 
 ## 1. Obiettivo
 
-L’applicazione gestisce un sistema dimostrativo di controllo accessi basato su PHP, MySQL e firmware ESP8266. Il pannello amministrativo permette di configurare varchi, utenti anagrafici, badge, autorizzazioni, ingressi, anomalie e log.
+L'applicazione gestisce un sistema dimostrativo di controllo accessi basato su PHP, MySQL e firmware ESP8266. Il pannello amministrativo configura varchi, utenti anagrafici, badge, autorizzazioni, ingressi, anomalie e log.
 
-## 2. Requisiti
-
-- PHP 7.4 o successivo;
-- estensione PDO MySQL;
-- MySQL o MariaDB con tabelle InnoDB;
-- HTTPS consigliato per il pannello amministrativo;
-- rewrite opzionale per gli URL `/api/<id>`;
-- accesso alle CDN di Bootstrap e Bootstrap Icons usate dall’interfaccia.
-
-## 3. Struttura
+## 2. Struttura
 
 ```text
 .
-├── .htaccess
 ├── README.md
 ├── DEVELOPMENT.md
 ├── config.php
@@ -46,19 +36,17 @@ L’applicazione gestisce un sistema dimostrativo di controllo accessi basato su
     └── footer.php
 ```
 
-## 4. Configurazione
+## 3. Configurazione
 
 Le costanti applicative sono definite in `config.php`:
 
 - `APP_NAME`, `APP_TIMEZONE` e `SESSION_NAME`;
 - credenziali MySQL e `TABLE_PREFIX`;
-- `DEVICE_API_KEY`, facoltativa;
-- `MAX_API_BODY_BYTES` per il body Base64;
-- `FIRMWARE_MAX_BADGES`, limite informativo non applicato lato server.
+- `MAX_API_BODY_BYTES` per il body Base64.
 
-Durante una nuova installazione, `install.php` verifica la connessione e riscrive `config.php` con i dati inseriti.
+Non è prevista autenticazione delle richieste edge nella fase demo. L'endpoint mostrato dal pannello usa HTTP e non aggiunge parametri di chiave.
 
-## 5. Tabelle
+## 4. Tabelle
 
 ### `users`
 
@@ -66,25 +54,19 @@ Account amministrativi usati per login, sessione e risoluzione delle anomalie.
 
 ### `directory_users`
 
-Anagrafica dei nominativi assegnabili ai badge:
-
-- `full_name`;
-- `email` e `phone` facoltativi;
-- `notes`;
-- `active`;
-- date di creazione e modifica.
-
-Questa tabella è distinta dagli account amministrativi.
+Anagrafica dei nominativi assegnabili ai badge. È distinta dagli account amministrativi.
 
 ### `access_points`
 
-Configurazione dei varchi. Durante un POST valido vengono aggiornati `last_seen_at`, `last_sync_at` e `last_ip`.
+Configurazione dei varchi con nome, posizione, descrizione e metadati dell'ultimo collegamento. Non esiste un flag amministrativo di abilitazione: un varco presente è considerato operativo e il pannello lo classifica online o offline in base a `last_seen_at`.
 
-Il campo `enabled` è attualmente informativo: l’endpoint POST verifica che il varco esista, ma non rifiuta la sincronizzazione di un varco disattivato.
+Durante un POST valido vengono aggiornati `last_seen_at`, `last_sync_at`, `last_ip` e `updated_at`.
 
 ### `badges`
 
-Contiene UID, assegnatario, contatore, stato, note e data dell’ultima osservazione. `assignee_id` punta a `directory_users` con `ON DELETE SET NULL`.
+Contiene UID, assegnatario, contatore, stato, note e data dell'ultima osservazione. `updated_at` viene modificato soltanto dalle operazioni amministrative; l'API aggiorna `counter` e `last_seen_at` senza alterarlo.
+
+Il massimo contatore ordinario è `4294967294`. Il valore `4294967295` è riservato alla sentinella del protocollo.
 
 ### `badge_access`
 
@@ -92,53 +74,58 @@ Relazione molti-a-molti fra badge e varchi. La coppia `(badge_id, access_point_i
 
 ### `access_events`
 
-Storico degli eventi ricevuti. La chiave univoca globale usa `badge_uid`, `counter` e `raw_timestamp`; il varco non fa parte della chiave.
+Storico degli eventi ricevuti. La chiave univoca è:
+
+```text
+(access_point_id, badge_uid, counter, raw_timestamp)
+```
+
+Il varco fa parte dell'identità: due lettori possono produrre record con UID, contatore e timestamp identici senza che uno venga eliminato.
+
+L'indice `idx_event_uid_time (badge_uid, raw_timestamp, counter)` supporta il caricamento mirato dello storico degli UID presenti nella sincronizzazione corrente.
 
 Il risultato viene classificato come:
 
 - `GRANTED` per un UID presente nella tabella `badges`;
-- `ANOMALY` per il contatore sentinella `4294967295`;
+- `ANOMALY` per il contatore sentinella;
 - `UNKNOWN` per un UID non registrato.
 
-La classificazione `GRANTED` indica la presenza del badge in anagrafica e non verifica, in questa fase, stato o autorizzazione al varco.
+`GRANTED` descrive l'esito locale prodotto dal varco e non una rivalutazione retroattiva del backend.
 
 ### `anomalies`
 
-Gli alert sono identificati da una fingerprint deterministica composta da tipo, varco e UID. La fingerprint è univoca. Una nuova rilevazione aggiorna `last_seen_at`, incrementa `occurrences` e riapre l’alert se era risolto.
+Ogni riga rappresenta un singolo evento o episodio anomalo. La fingerprint è univoca e include tipo, varco, UID e dati specifici dell'evidenza. Il replay è un no-op e non riapre una riga risolta.
 
 ### `system_logs`
 
 Contiene attività amministrative, autenticazioni, errori API e sincronizzazioni che hanno prodotto almeno un nuovo evento di accesso.
 
-### `app_meta`
+Non esiste una tabella `app_meta`: l'installer rileva l'installazione verificando la presenza dell'insieme completo delle tabelle applicative e di almeno un account amministrativo.
 
-Tabella marker creata per ultima dall’installer. Contiene almeno `installed_at` e `schema_version`, impostata a `2` nelle nuove installazioni.
-
-## 6. Flusso dispositivo
-
-La chiave `DEVICE_API_KEY`, quando configurata, viene verificata prima della distinzione fra GET e POST e si applica quindi a entrambi i metodi.
+## 5. Flusso dispositivo
 
 ### GET
 
-Restituisce il timestamp Unix arrotondato come testo ASCII. L’ID non viene verificato e il contatto non aggiorna lo stato del varco.
+Restituisce il timestamp Unix arrotondato come testo ASCII. L'ID non viene verificato e il contatto non aggiorna il varco.
 
 ### POST
 
-1. Verifica la chiave API opzionale.
-2. Verifica l’esistenza del varco.
-3. Controlla dimensione e validità del payload Base64.
-4. Decodifica badge presenti sul lettore e storico.
-5. Aggiorna metadati del varco e contatori dei badge osservati.
-6. Unisce lo storico ricevuto a quello memorizzato e rimuove i duplicati globali.
-7. Inserisce i nuovi eventi.
-8. Aggiorna gli alert per contatori non monotoni o fuori sincronia.
-9. Seleziona i badge attivi autorizzati al varco.
-10. Registra un log API soltanto quando sono stati inseriti nuovi eventi.
-11. Esegue il commit e restituisce la risposta binaria.
+1. Verifica l'esistenza del varco.
+2. Controlla dimensione e validità del payload Base64.
+3. Decodifica badge presenti sul lettore e storico.
+4. Avvia una transazione e blocca soltanto la riga del varco con `SELECT ... FOR UPDATE`, serializzando le sincronizzazioni dello stesso dispositivo.
+5. Carica soltanto i badge citati dal payload corrente.
+6. Segnala la sentinella nella configurazione locale e impedisce che venga salvata come contatore.
+7. Aggiorna i contatori ordinari osservati.
+8. Carica da `access_events` soltanto lo storico degli UID contenuti nella coda ricevuta; non usa un lock globale della tabella.
+9. Unisce e deduplica lo storico usando varco, UID, contatore e timestamp.
+10. Inserisce i nuovi eventi tramite l'indice univoco del database.
+11. Crea in modo idempotente le anomalie inferite o segnalate dall'edge.
+12. Seleziona i badge attivi autorizzati al varco con contatore non sentinella.
+13. Registra un log API soltanto se sono stati inseriti nuovi eventi.
+14. Esegue il commit e restituisce la risposta binaria.
 
-Le modifiche a varco, badge, eventi, anomalie e log della sincronizzazione vengono eseguite usando la stessa connessione e transazione PDO. Gli errori vengono registrati dopo il rollback.
-
-## 7. Protocollo binario
+## 6. Protocollo binario
 
 Il body del POST è Base64. Dopo la decodifica:
 
@@ -154,51 +141,70 @@ La risposta è una concatenazione di record da 8 byte:
 UID da 4 byte + contatore uint32 little-endian
 ```
 
-Le funzioni pure di decodifica, serializzazione, merge, deduplicazione e controllo dei contatori sono raccolte in `includes/device_protocol.php`.
+Le funzioni pure si trovano in `includes/device_protocol.php`.
 
-## 8. Anomalie aggregate
+## 7. Sentinella e monotonicità
 
-`create_anomaly()` calcola la fingerprint con:
+Sono definite due costanti di protocollo:
 
 ```text
-tipo | access_point_id | badge_uid
+DEVICE_COUNTER_MAX = 4294967294
+DEVICE_COUNTER_OUT_OF_SYNC = 4294967295
 ```
 
-La funzione cerca la riga con un lock transazionale. Se la trova, aggiorna la stessa riga; altrimenti ne crea una nuova. Lo schema aggiunge un indice univoco sulla fingerprint per proteggere il comportamento in presenza di richieste concorrenti.
+La sentinella:
 
-Per il contatore sentinella, gli UID vengono prima raccolti in un insieme: più record dello stesso badge nello stesso payload producono un solo aggiornamento dell’alert in quella sincronizzazione.
+- genera `CARD_OUT_OF_SYNC` quando compare nello storico;
+- genera lo stesso tipo di alert, con fingerprint distinta, quando compare nella configurazione locale;
+- non aggiorna `badges.counter`;
+- non viene serializzata nella risposta;
+- viene saltata da `protocol_non_monotonic_transitions()` e non diventa il riferimento precedente.
 
-## 9. Log di sincronizzazione
+Una sequenza `4294967295 → 25` non genera quindi un falso `COUNTER_NOT_MONOTONIC`. Se la sequenza ordinaria circostante è realmente decrescente, per esempio `3 → sentinella → 2`, viene comunque rilevata la transizione `3 → 2`.
 
-`api/device.php` conta le righe effettivamente inserite in `access_events`. Il log con sorgente `API` viene creato soltanto quando `new_events > 0`.
+## 8. Deduplicazione
 
-Le sincronizzazioni che aggiornano esclusivamente metadati del varco, contatori o risposta badge non generano un log informativo. Gli errori API continuano a essere registrati.
+`protocol_history_merge_and_deduplicate()` considera duplicati soltanto record con gli stessi:
 
-## 10. Campo assegnatario ricercabile
+```text
+access_point_id + UID + counter + timestamp
+```
 
-`badges.php` carica gli utenti da `directory_users` e rende:
+Lo schema MySQL applica la stessa identità mediante `uq_event`, rendendo l'inserimento idempotente anche in presenza di sincronizzazioni concorrenti.
 
-- un input di ricerca per nome, email o telefono;
-- un normale `<select name="assignee_id">` con l’opzione “Nessun assegnatario”.
+Per il controllo di monotonicità il contatore rimane associato al badge attraverso tutti i varchi; il varco corrente e quello precedente vengono conservati nella fingerprint della transizione.
 
-`assets/app.js` filtra le opzioni del selettore senza sostituire il controllo nativo. Senza JavaScript, l’elenco completo rimane selezionabile. Il pulsante di azzeramento rimuove filtro e assegnatario.
+## 9. Anomalie event-based
 
-Gli utenti disattivati rimangono nell’elenco con l’indicazione “disattivo”. Al salvataggio, il server verifica che l’ID ricevuto esista in `directory_users`.
+`create_anomaly()` calcola una fingerprint SHA-1 da:
 
-## 11. Installazione e aggiornamenti
+```text
+tipo | access_point_id | badge_uid | parti specifiche dell'evento
+```
 
-`install.php` crea lo schema versione 2, l’account amministrativo e infine `app_meta`.
+L'inserimento usa `ON DUPLICATE KEY UPDATE id = id`. Una fingerprint già presente non modifica date o stato.
 
-Se trova già la tabella `<prefisso>app_meta`, considera l’applicazione installata, salva eventualmente la nuova configurazione di connessione e non esegue modifiche allo schema.
+Le parti specifiche principali sono:
 
-Il pacchetto non include script di migrazione né test automatici. L’aggiornamento di database precedenti deve quindi essere gestito separatamente, dopo un backup completo.
+- `CARD_OUT_OF_SYNC` da storico: sorgente `history`, sentinella e timestamp;
+- `CARD_OUT_OF_SYNC` da configurazione: sorgente `allowed_cards` e sentinella;
+- `DISABLED_BADGE_ACCESS_AFTER_SYNC`: contatore e timestamp dell'accesso;
+- `COUNTER_NOT_MONOTONIC`: varco, contatore e timestamp del record precedente e corrente;
+- `DISABLED_BADGE_STILL_CONFIGURED`: `badges.updated_at` dell'episodio amministrativo.
 
-## 12. Sicurezza
+La cancellazione fisica di un'anomalia elimina la fingerprint e consente alla coda del lettore di ricrearla. La risoluzione conserva invece la riga e rende il replay innocuo.
+
+## 10. Installazione durante lo sviluppo
+
+`install.php` crea direttamente lo schema corrente e l'account amministrativo. Non sono presenti versioni dello schema o script di migrazione: prima del rilascio ufficiale gli adeguamenti vengono gestiti manualmente, ricreando o modificando il database secondo necessità.
+
+## 11. Sicurezza del pannello
 
 - query preparate per i valori dinamici;
 - escaping HTML con `e()`;
 - token CSRF sulle operazioni amministrative;
 - password salvate con `password_hash()`;
-- cookie di sessione `HttpOnly` e `SameSite=Lax`, con flag `Secure` quando la richiesta usa HTTPS;
-- chiave API opzionale per le richieste del dispositivo;
-- errori PHP non mostrati dall’endpoint dispositivo.
+- cookie di sessione `HttpOnly` e `SameSite=Lax`;
+- errori PHP non mostrati dall'endpoint dispositivo.
+
+La comunicazione edge non è autenticata né cifrata in questa fase demo.

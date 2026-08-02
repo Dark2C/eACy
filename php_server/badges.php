@@ -20,9 +20,9 @@ if (is_post()) {
             $accessPointIds = array_values(array_unique(array_map('intval', $_POST['access_points'] ?? [])));
 
             if (!$uid) {
-                throw new RuntimeException('L’UID deve contenere esattamente 8 caratteri esadecimali.');
+                throw new RuntimeException('L\'UID deve contenere esattamente 8 caratteri esadecimali.');
             }
-            if (!preg_match('/^\d+$/', $counterInput) || (float)$counterInput > 4294967295) {
+            if (!preg_match('/^\d+$/', $counterInput) || (int)$counterInput > DEVICE_COUNTER_MAX) {
                 throw new RuntimeException('Contatore non valido.');
             }
             $counter = (int)$counterInput;
@@ -31,7 +31,7 @@ if (is_post()) {
                 $stmt = db()->prepare('SELECT id FROM ' . table_name('directory_users') . ' WHERE id = ?');
                 $stmt->execute([$assigneeId]);
                 if (!$stmt->fetchColumn()) {
-                    throw new RuntimeException('L’assegnatario selezionato non esiste più.');
+                    throw new RuntimeException('L\'assegnatario selezionato non esiste più.');
                 }
             } else {
                 $assigneeId = null;
@@ -159,7 +159,7 @@ require __DIR__ . '/includes/header.php';
                     <div>
                         <label class="form-label">Assegnatario</label>
                         <?php if (!$directoryUsers): ?>
-                            <div class="alert alert-light border mb-0 small">L’anagrafica è vuota. <a href="people.php">Crea il primo utente</a> per assegnare il badge.</div>
+                            <div class="alert alert-light border mb-0 small">L'anagrafica è vuota. <a href="people.php">Crea il primo utente</a> per assegnare il badge.</div>
                         <?php else: ?>
                             <div class="vstack gap-2" data-assignee-selector>
                                 <div class="input-group">
@@ -179,13 +179,12 @@ require __DIR__ . '/includes/header.php';
                                 </select>
                                 <div class="small text-secondary d-none" data-assignee-empty>Nessun utente corrispondente alla ricerca.</div>
                             </div>
-                            <div class="form-text">La ricerca filtra l’elenco; il valore salvato è sempre l’utente selezionato.</div>
+                            <div class="form-text">La ricerca filtra l'elenco; il valore salvato è sempre l'utente selezionato.</div>
                         <?php endif; ?>
                     </div>
-                    <div><label class="form-label">Contatore</label><input class="form-control" type="number" min="0" max="4294967295" name="counter" value="<?= e($editBadge['counter'] ?? '0') ?>"></div>
+                    <div><label class="form-label">Contatore</label><input class="form-control" type="number" min="0" max="<?= DEVICE_COUNTER_MAX ?>" name="counter" value="<?= e($editBadge['counter'] ?? '0') ?>"></div>
                     <div>
                         <label class="form-label">Varchi autorizzati</label>
-                        <div class="form-text mb-2">Il firmware fornito gestisce al massimo <?= FIRMWARE_MAX_BADGES ?> badge: non superarli nella configurazione reale.</div>
                         <div class="border rounded-3 p-3 vstack gap-2 bg-light">
                             <?php if (!$devices): ?><span class="small text-secondary">Crea prima almeno un varco.</span><?php endif; ?>
                             <?php foreach ($devices as $device): ?>

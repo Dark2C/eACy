@@ -43,14 +43,17 @@ if (is_post()) {
     <title>Login · <?= e(APP_NAME) ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
-    <link href="assets/app.css" rel="stylesheet">
+    <link href="assets/app.css?v=<?= rawurlencode((string)@filemtime(__DIR__ . '/assets/app.css')) ?>" rel="stylesheet">
 </head>
 <body class="login-page d-flex align-items-center justify-content-center p-3">
 <div class="card login-card p-2 p-md-4">
     <div class="card-body">
         <div class="text-center mb-4">
-            <div class="brand-mark mx-auto mb-3" style="width:3.5rem;height:3.5rem;font-size:1.5rem;background:#22577a"><i class="bi bi-shield-lock"></i></div>
-            <h1 class="h3 fw-bold mb-1"><?= e(APP_NAME) ?></h1>
+            <img
+                class="login-logo mb-3"
+                src="assets/logo.svg?v=<?= rawurlencode((string)@filemtime(__DIR__ . '/assets/logo.svg')) ?>"
+                alt="EACY"
+            >
             <p class="text-secondary mb-0">Pannello amministratore</p>
         </div>
 

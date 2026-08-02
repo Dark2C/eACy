@@ -18,7 +18,7 @@ $metrics = [
     'anomalies' => (int)db()->query('SELECT COUNT(*) FROM ' . table_name('anomalies') . ' WHERE status = "OPEN"')->fetchColumn(),
 ];
 
-$stmt = db()->prepare('SELECT COUNT(*) FROM ' . table_name('access_points') . ' WHERE enabled = 1 AND last_seen_at >= ?');
+$stmt = db()->prepare('SELECT COUNT(*) FROM ' . table_name('access_points') . ' WHERE last_seen_at >= ?');
 $stmt->execute([$onlineSince]);
 $metrics['online'] = (int)$stmt->fetchColumn();
 
@@ -142,13 +142,12 @@ require __DIR__ . '/includes/header.php';
                         <thead><tr><th>Varco</th><th>Stato</th><th>Ultimo contatto</th><th>Badge</th></tr></thead>
                         <tbody>
                         <?php foreach ($devices as $device):
-                            $online = $device['enabled'] && $device['last_seen_at'] && $device['last_seen_at'] >= $onlineSince;
+                            $online = $device['last_seen_at'] && $device['last_seen_at'] >= $onlineSince;
                         ?>
                             <tr>
                                 <td><strong><?= e($device['name']) ?></strong><div class="small text-secondary"><?= e($device['location'] ?: 'ID dispositivo ' . $device['id']) ?></div></td>
                                 <td>
-                                    <?php if (!$device['enabled']): ?><span class="status-dot status-disabled"></span>Disattivato
-                                    <?php elseif ($online): ?><span class="status-dot status-online"></span>Online
+                                    <?php if ($online): ?><span class="status-dot status-online"></span>Online
                                     <?php else: ?><span class="status-dot status-offline"></span>Offline<?php endif; ?>
                                 </td>
                                 <td><?= e(relative_date($device['last_seen_at'])) ?></td>

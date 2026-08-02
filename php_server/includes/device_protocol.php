@@ -4,6 +4,9 @@
  * Funzioni pure per parsing, ordinamento, deduplicazione e serializzazione del protocollo.
  */
 
+const DEVICE_COUNTER_OUT_OF_SYNC = 4294967295;
+const DEVICE_COUNTER_MAX = 4294967294;
+
 function device_uint32le(string $bytes): int
 {
     if (strlen($bytes) !== 4) {
@@ -66,8 +69,8 @@ function decode_device_payload(string $encoded): array
 }
 
 /**
- * Ordina per timestamp, UID numerico e contatore.
- * L'ultima chiave diventa primaria: timestamp, UID, counter.
+ * Ordina per timestamp, UID numerico, contatore e varco.
+ * L'identità completa dell'evento è: varco, UID, contatore e timestamp.
  * _sequence rende stabile usort() anche quando tutti i campi coincidono.
  */
 function protocol_history_sort(array &$history): void
@@ -88,12 +91,17 @@ function protocol_history_sort(array &$history): void
             return $comparison;
         }
 
+        $comparison = ((int)($a['ac'] ?? 0)) <=> ((int)($b['ac'] ?? 0));
+        if ($comparison !== 0) {
+            return $comparison;
+        }
+
         return ((int)($a['_sequence'] ?? 0)) <=> ((int)($b['_sequence'] ?? 0));
     });
 }
 
 /**
- * Unisce lo storico e rimuove i duplicati con stesso timestamp, UID e contatore.
+ * Unisce lo storico e rimuove i duplicati con stesso varco, timestamp, UID e contatore.
  */
 function protocol_history_merge_and_deduplicate(array $storedHistory, array $receivedHistory): array
 {
@@ -118,6 +126,7 @@ function protocol_history_merge_and_deduplicate(array $storedHistory, array $rec
     $previous = null;
     foreach ($merged as $record) {
         $isDuplicate = $previous !== null
+            && (int)($record['ac'] ?? 0) === (int)($previous['ac'] ?? 0)
             && $record['uid'] === $previous['uid']
             && (int)$record['counter'] === (int)$previous['counter']
             && (int)$record['timestamp'] === (int)$previous['timestamp'];
@@ -132,57 +141,83 @@ function protocol_history_merge_and_deduplicate(array $storedHistory, array $rec
 }
 
 /**
- * Restituisce gli UID che presentano almeno una diminuzione del contatore
- * nello storico globale ordinato.
+ * Restituisce ogni transizione in cui il contatore diminuisce per lo stesso UID.
+ * La coppia previous/current consente di creare una fingerprint stabile per evento.
+ *
+ * @return array<int,array{uid:string,previous:array,current:array}>
  */
-function protocol_non_monotonic_uids(array $history): array
+function protocol_non_monotonic_transitions(array $history): array
 {
-    $groups = [];
-    $insertionOrder = 0;
+    $ordered = array_values($history);
+    protocol_history_sort($ordered);
 
-    foreach ($history as $record) {
+    $previousByUid = [];
+    $transitions = [];
+
+    foreach ($ordered as $record) {
+        // Il valore sentinella è un codice di errore dell'edge, non un contatore.
+        // Non deve quindi partecipare alla sequenza monotona né diventare il
+        // riferimento precedente per gli eventi successivi.
+        if ((int)$record['counter'] === DEVICE_COUNTER_OUT_OF_SYNC) {
+            continue;
+        }
+
         $uid = (string)$record['uid'];
-        $key = 'uid:' . $uid;
-        if (!isset($groups[$key])) {
-            $isArrayIndex = preg_match('/^(0|[1-9][0-9]*)$/', $uid) === 1
-                && (int)$uid >= 0
-                && (int)$uid <= 4294967294
-                && (string)(int)$uid === $uid;
+        $previous = $previousByUid[$uid] ?? null;
 
-            $groups[$key] = [
+        if ($previous !== null && (int)$record['counter'] < (int)$previous['counter']) {
+            $transitions[] = [
                 'uid' => $uid,
-                'counters' => [],
-                'is_array_index' => $isArrayIndex,
-                'numeric_key' => $isArrayIndex ? (int)$uid : null,
-                'insertion_order' => $insertionOrder++,
+                'previous' => $previous,
+                'current' => $record,
             ];
         }
-        $groups[$key]['counters'][] = (int)$record['counter'];
+
+        $previousByUid[$uid] = $record;
     }
 
-    // Le chiavi numeriche vengono ordinate prima delle altre, poi si conserva l’ordine di inserimento.
-    uasort($groups, static function (array $a, array $b): int {
-        if ($a['is_array_index'] && $b['is_array_index']) {
-            return $a['numeric_key'] <=> $b['numeric_key'];
-        }
-        if ($a['is_array_index'] !== $b['is_array_index']) {
-            return $a['is_array_index'] ? -1 : 1;
-        }
-        return $a['insertion_order'] <=> $b['insertion_order'];
-    });
+    return $transitions;
+}
 
-    $anomalousUids = [];
-    foreach ($groups as $group) {
-        $counters = $group['counters'];
-        for ($i = 1, $count = count($counters); $i < $count; $i++) {
-            if ($counters[$i] < $counters[$i - 1]) {
-                $anomalousUids[] = $group['uid'];
-                break;
-            }
-        }
+/**
+ * Indica se il lettore può legittimamente avere una configurazione precedente
+ * del badge. I timestamp hanno precisione al secondo: a parità di valore si
+ * privilegia l'ipotesi di divergenza temporanea per evitare falsi positivi.
+ */
+function protocol_reader_may_have_stale_badge_config(?string $previousSyncAt, ?string $badgeUpdatedAt): bool
+{
+    if (!$previousSyncAt || !$badgeUpdatedAt) {
+        return true;
     }
 
-    return $anomalousUids;
+    $previousSyncTimestamp = strtotime($previousSyncAt);
+    $badgeUpdatedTimestamp = strtotime($badgeUpdatedAt);
+    if ($previousSyncTimestamp === false || $badgeUpdatedTimestamp === false) {
+        return true;
+    }
+
+    return $badgeUpdatedTimestamp >= $previousSyncTimestamp;
+}
+
+/**
+ * Verifica se un accesso con badge disabilitato è avvenuto dopo una
+ * sincronizzazione che avrebbe già dovuto rimuovere il badge dal lettore.
+ */
+function protocol_disabled_badge_access_is_after_sync(
+    ?string $previousSyncAt,
+    ?string $badgeUpdatedAt,
+    int $eventTimestamp
+): bool {
+    if (protocol_reader_may_have_stale_badge_config($previousSyncAt, $badgeUpdatedAt)) {
+        return false;
+    }
+
+    $previousSyncTimestamp = $previousSyncAt ? strtotime($previousSyncAt) : false;
+    if ($previousSyncTimestamp === false) {
+        return false;
+    }
+
+    return $eventTimestamp > $previousSyncTimestamp;
 }
 
 function encode_device_cards(array $cards): string
@@ -193,7 +228,11 @@ function encode_device_cards(array $cards): string
         if ($uidBytes === false || strlen($uidBytes) !== 4) {
             continue;
         }
-        $response .= $uidBytes . pack('V', (int)$card['counter']);
+        $counter = (int)$card['counter'];
+        if ($counter < 0 || $counter > DEVICE_COUNTER_MAX) {
+            continue;
+        }
+        $response .= $uidBytes . pack('V', $counter);
     }
     return $response;
 }

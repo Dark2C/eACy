@@ -41,7 +41,7 @@ $stmt = db()->prepare($sql); $stmt->execute($params); $anomalies = $stmt->fetchA
 require __DIR__ . '/includes/header.php';
 ?>
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
-    <div><h1 class="page-title h2 mb-1">Anomalie</h1><p class="text-secondary mb-0">Contatori incoerenti, badge fuori sincronia e problemi rilevati dall’API.</p></div>
+    <div><h1 class="page-title h2 mb-1">Anomalie</h1><p class="text-secondary mb-0">Contatori incoerenti, badge fuori sincronia e problemi rilevati dall'API.</p></div>
     <div class="btn-group"><a class="btn btn-sm btn-<?= $status === 'OPEN' ? 'primary' : 'outline-primary' ?>" href="anomalies.php?status=OPEN">Aperte</a><a class="btn btn-sm btn-<?= $status === 'RESOLVED' ? 'primary' : 'outline-primary' ?>" href="anomalies.php?status=RESOLVED">Risolte</a><a class="btn btn-sm btn-<?= $status === 'ALL' ? 'primary' : 'outline-primary' ?>" href="anomalies.php?status=ALL">Tutte</a></div>
 </div>
 
@@ -60,15 +60,13 @@ require __DIR__ . '/includes/header.php';
                 <div class="row g-2 small text-secondary">
                     <div class="col-md-4"><strong>Varco:</strong> <?= e($anomaly['access_point_name'] ?: ($anomaly['access_point_id'] ? '#' . $anomaly['access_point_id'] : '—')) ?></div>
                     <div class="col-md-4"><strong>Badge:</strong> <?= e($anomaly['assignee_name'] ?: $anomaly['badge_uid'] ?: '—') ?></div>
-                    <div class="col-md-4"><strong>Occorrenze:</strong> <?= (int)$anomaly['occurrences'] ?></div>
-                    <div class="col-md-4"><strong>Prima:</strong> <?= e(format_date($anomaly['first_seen_at'])) ?></div>
-                    <div class="col-md-4"><strong>Ultima:</strong> <?= e(format_date($anomaly['last_seen_at'])) ?></div>
+                    <div class="col-md-4"><strong>Rilevata:</strong> <?= e(format_date($anomaly['first_seen_at'])) ?></div>
                     <?php if ($anomaly['resolved_at']): ?><div class="col-md-4"><strong>Risolta:</strong> <?= e(format_date($anomaly['resolved_at'])) ?> da <?= e($anomaly['resolver_name'] ?: 'admin') ?></div><?php endif; ?>
                 </div>
             </div>
             <div class="d-flex gap-2 align-items-start">
                 <form method="post"><?= csrf_field() ?><input type="hidden" name="id" value="<?= (int)$anomaly['id'] ?>"><input type="hidden" name="action" value="<?= $anomaly['status'] === 'OPEN' ? 'resolve' : 'reopen' ?>"><button class="btn btn-sm btn-<?= $anomaly['status'] === 'OPEN' ? 'success' : 'outline-warning' ?>"><i class="bi bi-<?= $anomaly['status'] === 'OPEN' ? 'check2' : 'arrow-counterclockwise' ?>"></i> <?= $anomaly['status'] === 'OPEN' ? 'Risolvi' : 'Riapri' ?></button></form>
-                <form method="post"><?= csrf_field() ?><input type="hidden" name="id" value="<?= (int)$anomaly['id'] ?>"><input type="hidden" name="action" value="delete"><button class="btn btn-sm btn-outline-danger" data-confirm="Eliminare questa anomalia?"><i class="bi bi-trash"></i></button></form>
+                <form method="post"><?= csrf_field() ?><input type="hidden" name="id" value="<?= (int)$anomaly['id'] ?>"><input type="hidden" name="action" value="delete"><button class="btn btn-sm btn-outline-danger" data-confirm="Eliminare questa anomalia? Se l'evento è ancora nella coda del lettore, potrà ricomparire alla prossima sincronizzazione."><i class="bi bi-trash"></i></button></form>
             </div>
         </div>
     </div></div>

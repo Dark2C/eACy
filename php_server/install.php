@@ -36,12 +36,8 @@ function installer_config_contents(array $database): string
         . "define('DB_CHARSET', " . $value(DB_CHARSET) . ");\n\n"
         . "// Prefisso delle tabelle. Usa soltanto lettere, numeri e underscore.\n"
         . "define('TABLE_PREFIX', " . $value($database['prefix']) . ");\n\n"
-        . "// Chiave API opzionale. Lascia vuota per non richiederla.\n"
-        . "define('DEVICE_API_KEY', " . $value(DEVICE_API_KEY) . ");\n\n"
         . "// Limite massimo del body Base64 ricevuto dal microcontrollore.\n"
-        . "define('MAX_API_BODY_BYTES', " . (int)MAX_API_BODY_BYTES . ");\n\n"
-        . "// Limite informativo del firmware; non viene applicato lato server.\n"
-        . "define('FIRMWARE_MAX_BADGES', " . (int)FIRMWARE_MAX_BADGES . ");\n";
+        . "define('MAX_API_BODY_BYTES', " . (int)MAX_API_BODY_BYTES . ");\n";
 }
 
 function installer_save_config(array $database): void
@@ -101,14 +97,14 @@ if (is_post() && !$installed) {
                 DB_CHARSET
             );
 
-            if (database_has_table($pdo, $database['prefix'] . 'app_meta')) {
+            if (application_is_installed($pdo, $database['prefix'])) {
                 // Utile anche quando config.php è stato perso o contiene credenziali non più valide.
                 installer_save_config($database);
                 $installed = true;
             } elseif ($form['username'] === '' || $form['display_name'] === '') {
                 $error = 'Inserisci nome utente e nome visualizzato.';
             } elseif ($password === '') {
-                $error = 'Inserisci una password per l’amministratore.';
+                $error = 'Inserisci una password per l\'amministratore.';
             } else {
                 $charset = DB_CHARSET;
                 $engine = ' ENGINE=InnoDB DEFAULT CHARSET=' . $charset . ' COLLATE=utf8mb4_unicode_ci';
@@ -148,7 +144,6 @@ if (is_post() && !$installed) {
                     name VARCHAR(120) NOT NULL,
                     location VARCHAR(180) NULL,
                     description TEXT NULL,
-                    enabled TINYINT(1) NOT NULL DEFAULT 1,
                     last_seen_at DATETIME NULL,
                     last_sync_at DATETIME NULL,
                     last_ip VARCHAR(45) NULL,
@@ -194,8 +189,9 @@ if (is_post() && !$installed) {
                     result ENUM("GRANTED", "ANOMALY", "UNKNOWN") NOT NULL DEFAULT "GRANTED",
                     raw_timestamp BIGINT UNSIGNED NOT NULL,
                     PRIMARY KEY (id),
-                    UNIQUE KEY uq_event (badge_uid, counter, raw_timestamp),
-                    KEY idx_event_date (occurred_at), KEY idx_event_uid (badge_uid),
+                    UNIQUE KEY uq_event (access_point_id, badge_uid, counter, raw_timestamp),
+                    KEY idx_event_date (occurred_at),
+                    KEY idx_event_uid_time (badge_uid, raw_timestamp, counter),
                     CONSTRAINT fk_event_access_point FOREIGN KEY (access_point_id) REFERENCES ' . $table('access_points') . ' (id) ON DELETE SET NULL,
                     CONSTRAINT fk_event_badge FOREIGN KEY (badge_id) REFERENCES ' . $table('badges') . ' (id) ON DELETE SET NULL
                 )' . $engine;
@@ -212,7 +208,6 @@ if (is_post() && !$installed) {
                     status ENUM("OPEN", "RESOLVED") NOT NULL DEFAULT "OPEN",
                     first_seen_at DATETIME NOT NULL,
                     last_seen_at DATETIME NOT NULL,
-                    occurrences INT UNSIGNED NOT NULL DEFAULT 1,
                     resolved_at DATETIME NULL,
                     resolved_by INT UNSIGNED NULL,
                     PRIMARY KEY (id), UNIQUE KEY uq_anomaly_fingerprint (fingerprint), KEY idx_status_date (status, last_seen_at),
@@ -255,19 +250,6 @@ if (is_post() && !$installed) {
 
                 // Salva le credenziali soltanto dopo aver verificato la connessione e creato lo schema.
                 installer_save_config($database);
-
-                // La tabella marker viene creata per ultima: la sua presenza indica installazione conclusa.
-                $pdo->exec('CREATE TABLE ' . $table('app_meta') . ' (
-                    meta_key VARCHAR(64) NOT NULL,
-                    meta_value TEXT NULL,
-                    updated_at DATETIME NOT NULL,
-                    PRIMARY KEY (meta_key)
-                )' . $engine);
-                $pdo->prepare('INSERT INTO ' . $table('app_meta') . ' (meta_key, meta_value, updated_at) VALUES (?, ?, ?)')
-                    ->execute(['installed_at', $now, $now]);
-                $pdo->prepare('INSERT INTO ' . $table('app_meta') . ' (meta_key, meta_value, updated_at) VALUES (?, ?, ?)')
-                    ->execute(['schema_version', '2', $now]);
-
                 $installed = true;
             }
         } catch (Throwable $e) {
@@ -288,7 +270,7 @@ if (is_post() && !$installed) {
 <body class="login-page d-flex align-items-center justify-content-center p-3 py-5">
 <div class="card install-card p-2 p-md-4"><div class="card-body">
     <h1 class="h3 fw-bold mb-2">Installazione</h1>
-    <p class="text-secondary">Configura MySQL, crea le tabelle vuote e l’account amministratore.</p>
+    <p class="text-secondary">Configura MySQL, crea le tabelle vuote e l\'account amministratore.</p>
 
     <?php if ($error): ?>
         <div class="alert alert-danger"><strong>Errore:</strong> <?= e($error) ?></div>
@@ -296,7 +278,7 @@ if (is_post() && !$installed) {
 
     <?php if ($installed): ?>
         <div class="alert alert-success">Applicazione installata correttamente.</div>
-        <p class="text-secondary small">L’installer è ora bloccato dalla presenza della tabella <code><?= e($form['table_prefix']) ?>app_meta</code>.</p>
+        <p class="text-secondary small">L'installer rileva le tabelle applicative e almeno un account amministrativo.</p>
         <a class="btn btn-primary w-100" href="login.php">Vai al login</a>
     <?php else: ?>
         <form method="post" class="vstack gap-4">
@@ -349,7 +331,7 @@ if (is_post() && !$installed) {
             </section>
 
             <div class="alert alert-info mb-0 small">
-                L’installazione non crea varchi, badge o associazioni predefinite.
+                L'installazione non crea varchi, badge o associazioni predefinite.
             </div>
             <button class="btn btn-primary btn-lg">Installa applicazione</button>
         </form>

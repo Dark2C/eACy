@@ -26,7 +26,7 @@ if (is_post()) {
                 throw new RuntimeException('Il nominativo non può superare 160 caratteri.');
             }
             if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                throw new RuntimeException('L’indirizzo email non è valido.');
+                throw new RuntimeException('L\'indirizzo email non è valido.');
             }
 
             $now = date('Y-m-d H:i:s');
@@ -57,7 +57,7 @@ if (is_post()) {
             db()->prepare('UPDATE ' . table_name('directory_users') . ' SET active = NOT active, updated_at = ? WHERE id = ?')
                 ->execute([date('Y-m-d H:i:s'), $id]);
             system_log('WARNING', 'ADMIN', 'Stato utente anagrafico modificato: ' . $fullName);
-            flash('success', 'Stato dell’utente modificato.');
+            flash('success', 'Stato dell\'utente modificato.');
         } elseif ($action === 'delete') {
             $id = (int)($_POST['id'] ?? 0);
             $stmt = db()->prepare('SELECT full_name FROM ' . table_name('directory_users') . ' WHERE id = ?');

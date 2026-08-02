@@ -26,14 +26,24 @@ function api_error(int $status, string $message): void
     exit;
 }
 
-$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-
-if (DEVICE_API_KEY !== '') {
-    $providedKey = (string)($_GET['key'] ?? '');
-    if (!hash_equals(DEVICE_API_KEY, $providedKey)) {
-        api_error(403, 'Invalid API key');
+/**
+ * @param array<int,array{uid:string}> $records
+ * @return string[]
+ */
+function api_unique_uids(array $records): array
+{
+    $uids = [];
+    foreach ($records as $record) {
+        $uid = (string)($record['uid'] ?? '');
+        if ($uid !== '') {
+            $uids[$uid] = true;
+        }
     }
+
+    return array_keys($uids);
 }
+
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 // Il GET restituisce il timestamp anche se l'ID non è presente in anagrafica.
 if ($method === 'GET') {
@@ -56,12 +66,9 @@ if ($method !== 'POST') {
 $deviceId = (int)($_GET['id'] ?? 0);
 
 try {
-    $deviceStmt = db()->prepare('SELECT * FROM ' . table_name('access_points') . ' WHERE id = ? LIMIT 1');
+    $deviceStmt = db()->prepare('SELECT id FROM ' . table_name('access_points') . ' WHERE id = ? LIMIT 1');
     $deviceStmt->execute([$deviceId]);
-    $device = $deviceStmt->fetch();
-
-    // Il protocollo richiede che il varco esista; lo stato enabled resta informativo.
-    if (!$device) {
+    if (!$deviceStmt->fetchColumn()) {
         api_error(400, 'Invalid access control system id');
     }
 
@@ -91,6 +98,19 @@ try {
     $pdo = db();
     $pdo->beginTransaction();
 
+    // Serializza le sincronizzazioni dello stesso varco e legge in modo coerente
+    // il timestamp della sincronizzazione precedente.
+    $deviceLockStmt = $pdo->prepare(
+        'SELECT last_sync_at FROM ' . table_name('access_points') . ' WHERE id = ? FOR UPDATE'
+    );
+    $deviceLockStmt->execute([$deviceId]);
+    $lockedDevice = $deviceLockStmt->fetch();
+    if (!$lockedDevice) {
+        $pdo->rollBack();
+        api_error(400, 'Invalid access control system id');
+    }
+    $previousSyncAt = $lockedDevice['last_sync_at'] ?? null;
+
     $ip = substr((string)($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45);
     $now = date('Y-m-d H:i:s');
     $pdo->prepare(
@@ -98,8 +118,22 @@ try {
          SET last_seen_at = ?, last_sync_at = ?, last_ip = ?, updated_at = ? WHERE id = ?'
     )->execute([$now, $now, $ip, $now, $deviceId]);
 
-    // I badge vengono elaborati nell'ordine di creazione.
-    $badgeRows = $pdo->query('SELECT * FROM ' . table_name('badges') . ' ORDER BY id')->fetchAll();
+    // Carica soltanto i badge citati dal payload corrente. La configurazione da
+    // restituire al lettore viene selezionata separatamente a fine sync.
+    $relevantUids = array_values(array_unique(array_merge(
+        api_unique_uids($readerAllowedCards),
+        api_unique_uids($receivedHistory)
+    )));
+    $badgeRows = [];
+    if ($relevantUids) {
+        $placeholders = implode(',', array_fill(0, count($relevantUids), '?'));
+        $badgeStmt = $pdo->prepare(
+            'SELECT * FROM ' . table_name('badges') . ' WHERE uid IN (' . $placeholders . ') ORDER BY id'
+        );
+        $badgeStmt->execute($relevantUids);
+        $badgeRows = $badgeStmt->fetchAll();
+    }
+
     $badgesByUid = [];
     foreach ($badgeRows as $badge) {
         $badgesByUid[$badge['uid']] = $badge;
@@ -113,11 +147,36 @@ try {
         }
     }
 
+    // Il valore sentinella nella configurazione locale non è un contatore valido:
+    // viene segnalato e non deve mai contaminare badges.counter.
+    foreach ($readerAllowedCards as $readerCard) {
+        $uid = $readerCard['uid'];
+        if ((int)$readerCard['counter'] !== DEVICE_COUNTER_OUT_OF_SYNC) {
+            continue;
+        }
+
+        $badge = $badgesByUid[$uid] ?? null;
+        create_anomaly(
+            'CARD_OUT_OF_SYNC',
+            'CRITICAL',
+            'Out-of-sync sentinel found in reader card configuration',
+            $deviceId,
+            $badge ? (int)$badge['id'] : null,
+            $uid,
+            ['allowed_cards', (string)DEVICE_COUNTER_OUT_OF_SYNC],
+            $now
+        );
+    }
+
     $updateBadgeCounter = $pdo->prepare(
-        'UPDATE ' . table_name('badges') . ' SET counter = ?, last_seen_at = ?, updated_at = ? WHERE id = ?'
+        'UPDATE ' . table_name('badges') . ' SET counter = ?, last_seen_at = ? WHERE id = ?'
+    );
+    $touchBadge = $pdo->prepare(
+        'UPDATE ' . table_name('badges') . ' SET last_seen_at = ? WHERE id = ?'
     );
 
-    // Aggiorna i contatori osservati sul lettore.
+    // Aggiorna i contatori osservati senza modificare updated_at, che rappresenta
+    // l'ultima variazione amministrativa della configurazione del badge.
     foreach ($badgeRows as $badge) {
         $readerCard = $readerCardByUid[$badge['uid']] ?? null;
         if ($readerCard === null) {
@@ -126,29 +185,51 @@ try {
 
         $serverCounter = (int)$badge['counter'];
         $readerCounter = (int)$readerCard['counter'];
+        $badgeEnabled = (int)$badge['enabled'] === 1;
 
-        if (!(int)$badge['enabled'] && $serverCounter !== $readerCounter) {
+        if (!$badgeEnabled && !protocol_reader_may_have_stale_badge_config(
+            $previousSyncAt,
+            $badge['updated_at'] ?? null
+        )) {
             create_anomaly(
-                'DISABLED_BADGE_COUNTER_CHANGED',
+                'DISABLED_BADGE_STILL_CONFIGURED',
                 'WARNING',
-                'Card counter changed without enabling the card',
+                'Disabled card still present in reader configuration after synchronization',
                 $deviceId,
                 (int)$badge['id'],
-                $badge['uid']
+                $badge['uid'],
+                [(string)($badge['updated_at'] ?? 'unknown')],
+                $now
             );
-            // In presenza di anomalia il contatore memorizzato non viene aggiornato.
-        } else {
-            $newCounter = max($serverCounter, $readerCounter);
-            $updateBadgeCounter->execute([$newCounter, $now, $now, (int)$badge['id']]);
-            $badgesByUid[$badge['uid']]['counter'] = $newCounter;
         }
+
+        if ($readerCounter === DEVICE_COUNTER_OUT_OF_SYNC) {
+            $touchBadge->execute([$now, (int)$badge['id']]);
+            continue;
+        }
+
+        // Il contatore osservato viene conservato anche per i badge disabilitati:
+        // descrive lo stato reale del lettore e non modifica lo stato enabled.
+        $newCounter = max($serverCounter, $readerCounter);
+        $updateBadgeCounter->execute([$newCounter, $now, (int)$badge['id']]);
+        $badgesByUid[$badge['uid']]['counter'] = $newCounter;
     }
 
-    // Carica lo storico globale degli accessi.
-    $storedRows = $pdo->query(
-        'SELECT id, access_point_id, badge_id, badge_uid, counter, raw_timestamp
-         FROM ' . table_name('access_events') . ' ORDER BY id FOR UPDATE'
-    )->fetchAll();
+    // Per il controllo di monotonicità carica solo lo storico degli UID presenti
+    // nella coda ricevuta, anziché bloccare e scansionare l'intera tabella.
+    $historyUids = api_unique_uids($receivedHistory);
+    $storedRows = [];
+    if ($historyUids) {
+        $placeholders = implode(',', array_fill(0, count($historyUids), '?'));
+        $storedStmt = $pdo->prepare(
+            'SELECT id, access_point_id, badge_id, badge_uid, counter, raw_timestamp
+             FROM ' . table_name('access_events') . '
+             WHERE badge_uid IN (' . $placeholders . ')
+             ORDER BY badge_uid, raw_timestamp, counter, access_point_id, id'
+        );
+        $storedStmt->execute($historyUids);
+        $storedRows = $storedStmt->fetchAll();
+    }
 
     $storedHistory = [];
     foreach ($storedRows as $row) {
@@ -161,22 +242,7 @@ try {
         ];
     }
 
-    // Correzione intenzionale del solo refuso record.date -> record.timestamp.
     $mergedHistory = protocol_history_merge_and_deduplicate($storedHistory, $receivedHistory);
-
-    // Se il DB proviene dalla versione precedente, elimina eventuali duplicati globali.
-    $keptStoredIds = [];
-    foreach ($mergedHistory as $record) {
-        if (($record['_source'] ?? '') === 'stored' && isset($record['id'])) {
-            $keptStoredIds[(int)$record['id']] = true;
-        }
-    }
-    $deleteEvent = $pdo->prepare('DELETE FROM ' . table_name('access_events') . ' WHERE id = ?');
-    foreach ($storedRows as $row) {
-        if (!isset($keptStoredIds[(int)$row['id']])) {
-            $deleteEvent->execute([(int)$row['id']]);
-        }
-    }
 
     $insertEvent = $pdo->prepare(
         'INSERT IGNORE INTO ' . table_name('access_events') . '
@@ -185,6 +251,7 @@ try {
     );
 
     $insertedEvents = 0;
+    $disabledAccessAfterSyncEvents = [];
     foreach ($mergedHistory as $record) {
         if (($record['_source'] ?? '') !== 'received') {
             continue;
@@ -195,7 +262,29 @@ try {
         $timestamp = (int)$record['timestamp'];
         $badge = $badgesByUid[$uid] ?? null;
         $badgeId = $badge ? (int)$badge['id'] : null;
-        $result = $counter === 4294967295 ? 'ANOMALY' : ($badge ? 'GRANTED' : 'UNKNOWN');
+        // GRANTED descrive l'esito locale già prodotto dal varco. Un badge può
+        // risultare disabilitato sul server solo dopo l'evento o prima della sync.
+        $result = $counter === DEVICE_COUNTER_OUT_OF_SYNC ? 'ANOMALY' : ($badge ? 'GRANTED' : 'UNKNOWN');
+
+        // Un accesso con badge disabilitato diventa una vera anomalia solo se il
+        // varco aveva già completato una sync successiva alla modifica e l'evento
+        // è avvenuto dopo quella sync. L'esito storico resta comunque GRANTED.
+        if (
+            $badge
+            && (int)$badge['enabled'] !== 1
+            && $counter !== DEVICE_COUNTER_OUT_OF_SYNC
+            && protocol_disabled_badge_access_is_after_sync(
+                $previousSyncAt,
+                $badge['updated_at'] ?? null,
+                $timestamp
+            )
+        ) {
+            $disabledAccessAfterSyncEvents[] = [
+                'uid' => $uid,
+                'counter' => $counter,
+                'timestamp' => $timestamp,
+            ];
+        }
 
         $insertEvent->execute([
             $deviceId,
@@ -212,44 +301,77 @@ try {
         }
     }
 
-    // Ricontrolla lo storico globale e aggiorna l'alert associato a ogni UID non monotono.
-    foreach (protocol_non_monotonic_uids($mergedHistory) as $uid) {
+    foreach ($disabledAccessAfterSyncEvents as $event) {
+        $uid = $event['uid'];
         $badge = $badgesByUid[$uid] ?? null;
+        create_anomaly(
+            'DISABLED_BADGE_ACCESS_AFTER_SYNC',
+            'CRITICAL',
+            'Access granted with a disabled card after reader synchronization',
+            $deviceId,
+            $badge ? (int)$badge['id'] : null,
+            $uid,
+            [(string)$event['counter'], (string)$event['timestamp']],
+            date('Y-m-d H:i:s', (int)$event['timestamp'])
+        );
+    }
+
+    // Ogni diminuzione del contatore è un evento distinto e idempotente. Il
+    // valore sentinella viene escluso dalla funzione di correlazione.
+    foreach (protocol_non_monotonic_transitions($mergedHistory) as $transition) {
+        $uid = $transition['uid'];
+        $previous = $transition['previous'];
+        $current = $transition['current'];
+        $anomalyDeviceId = (int)($current['ac'] ?? $deviceId);
+        $badge = $badgesByUid[$uid] ?? null;
+
         create_anomaly(
             'COUNTER_NOT_MONOTONIC',
             'WARNING',
             'Card counter not monotonic increasing',
-            $deviceId,
+            $anomalyDeviceId,
             $badge ? (int)$badge['id'] : null,
-            $uid
+            $uid,
+            [
+                (string)($previous['ac'] ?? 0),
+                (string)$previous['counter'],
+                (string)$previous['timestamp'],
+                (string)($current['ac'] ?? 0),
+                (string)$current['counter'],
+                (string)$current['timestamp'],
+            ],
+            date('Y-m-d H:i:s', (int)$current['timestamp'])
         );
     }
 
-    // Un badge fuori sincronia aggiorna un solo alert per varco e UID.
-    $outOfSyncUids = [];
+    // Ogni record sentinella della coda circolare identifica un evento univoco.
     foreach ($receivedHistory as $record) {
-        if ((int)$record['counter'] === 4294967295) {
-            $outOfSyncUids[$record['uid']] = true;
+        if ((int)$record['counter'] !== DEVICE_COUNTER_OUT_OF_SYNC) {
+            continue;
         }
-    }
-    foreach (array_keys($outOfSyncUids) as $uid) {
+
+        $uid = $record['uid'];
         $badge = $badgesByUid[$uid] ?? null;
         create_anomaly(
             'CARD_OUT_OF_SYNC',
             'CRITICAL',
-            'Card counter out of sync detected from reader',
+            'Card counter out of sync detected from reader history',
             $deviceId,
             $badge ? (int)$badge['id'] : null,
-            $uid
+            $uid,
+            ['history', (string)$record['counter'], (string)$record['timestamp']],
+            date('Y-m-d H:i:s', (int)$record['timestamp'])
         );
     }
 
-    // Restituisce tutti i badge abilitati e autorizzati per il varco.
+    // Restituisce tutti i badge abilitati, autorizzati e con contatore ordinario.
     $allowedStmt = $pdo->prepare(
         'SELECT b.uid, b.counter
          FROM ' . table_name('badges') . ' b
          INNER JOIN ' . table_name('badge_access') . ' ba ON ba.badge_id = b.id
-         WHERE ba.access_point_id = ? AND b.enabled = 1
+         WHERE ba.access_point_id = ?
+           AND b.enabled = 1
+           AND b.counter <= ' . DEVICE_COUNTER_MAX . '
          ORDER BY b.id'
     );
     $allowedStmt->execute([$deviceId]);
