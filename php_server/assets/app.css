@@ -1,0 +1,179 @@
+:root {
+    --app-navy: #14213d;
+    --app-blue: #22577a;
+    --app-cyan: #38a3a5;
+    --app-bg: #f3f6fa;
+}
+
+body {
+    background: var(--app-bg);
+    color: #243041;
+    min-height: 100vh;
+}
+
+.app-navbar {
+    background: linear-gradient(110deg, var(--app-navy), var(--app-blue));
+    box-shadow: 0 8px 24px rgba(20, 33, 61, .18);
+}
+
+.brand-mark {
+    display: inline-grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    margin-right: .45rem;
+    border-radius: .7rem;
+    color: #fff;
+    background: rgba(255,255,255,.15);
+}
+
+.navbar .nav-link {
+    border-radius: .65rem;
+    padding-left: .8rem !important;
+    padding-right: .8rem !important;
+}
+
+.navbar .nav-link.active,
+.navbar .nav-link:hover {
+    background: rgba(255,255,255,.12);
+}
+
+.page-title {
+    font-weight: 750;
+    letter-spacing: -.025em;
+}
+
+.card {
+    border: 0;
+    border-radius: 1rem;
+    box-shadow: 0 8px 28px rgba(30, 55, 90, .07);
+}
+
+.metric-card .metric-icon {
+    width: 3rem;
+    height: 3rem;
+    display: grid;
+    place-items: center;
+    border-radius: .9rem;
+    font-size: 1.35rem;
+    background: #e9f2ff;
+    color: #22577a;
+}
+
+.metric-value {
+    font-size: 1.85rem;
+    font-weight: 750;
+    line-height: 1;
+}
+
+.table > :not(caption) > * > * {
+    padding: .85rem .8rem;
+    vertical-align: middle;
+}
+
+.table thead th {
+    color: #6b7788;
+    font-size: .75rem;
+    text-transform: uppercase;
+    letter-spacing: .055em;
+    border-bottom-width: 1px;
+}
+
+.uid {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    letter-spacing: .08em;
+}
+
+.status-dot {
+    display: inline-block;
+    width: .55rem;
+    height: .55rem;
+    border-radius: 50%;
+    margin-right: .35rem;
+}
+
+.status-online { background: #20c997; box-shadow: 0 0 0 .2rem rgba(32,201,151,.12); }
+.status-offline { background: #adb5bd; }
+.status-disabled { background: #dc3545; }
+
+.activity-item {
+    position: relative;
+    padding-left: 2.5rem;
+    padding-bottom: 1.1rem;
+}
+
+.activity-item::before {
+    content: '';
+    position: absolute;
+    left: 1rem;
+    top: 1.8rem;
+    bottom: 0;
+    width: 1px;
+    background: #e1e7ef;
+}
+
+.activity-item:last-child::before { display: none; }
+
+.activity-icon {
+    position: absolute;
+    left: .25rem;
+    top: .1rem;
+    width: 1.55rem;
+    height: 1.55rem;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: #e9f2ff;
+    color: #22577a;
+    font-size: .8rem;
+}
+
+.login-page {
+    min-height: 100vh;
+    background:
+        radial-gradient(circle at top right, rgba(56,163,165,.28), transparent 32%),
+        linear-gradient(135deg, #14213d, #22577a);
+}
+
+.login-card {
+    max-width: 430px;
+    width: 100%;
+    border-radius: 1.3rem;
+    box-shadow: 0 30px 90px rgba(0,0,0,.28);
+}
+
+.install-card {
+    max-width: 760px;
+    width: 100%;
+    border-radius: 1.3rem;
+    box-shadow: 0 30px 90px rgba(0,0,0,.28);
+}
+
+.form-control, .form-select {
+    border-radius: .7rem;
+    padding: .65rem .8rem;
+}
+
+.btn {
+    border-radius: .7rem;
+}
+
+.code-box {
+    background: #0f172a;
+    color: #d7e3f4;
+    border-radius: .75rem;
+    padding: .75rem 1rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: .83rem;
+    word-break: break-all;
+}
+
+.empty-state {
+    padding: 3rem 1rem;
+    text-align: center;
+    color: #7c8796;
+}
+
+[data-assignee-select] {
+    min-height: 2.8rem;
+}

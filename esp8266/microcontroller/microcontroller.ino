@@ -23,7 +23,7 @@ WiFiClient client;
 SoftwareSerial SWSerial(4, 5); //(RX,TX) constructor for our SoftwareSerial library, in which we define the pins to which we will connect the module
 // constructors for libraries that are used for communication with the module
 PN532_SWHSU pn532swhsu(SWSerial); // constructor for High-speed UART
-PN532 nfc(pn532swhsu);            // constructor for the PM532 library
+PN532 nfc(pn532swhsu);            // constructor for the PN532 library
 
 char gatewayAddress[100];
 unsigned long gatewaySyncInterval = 0;

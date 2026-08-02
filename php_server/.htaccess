@@ -1,0 +1,8 @@
+DirectoryIndex index.php
+RewriteEngine On
+
+# Compatibilità con endpoint Node: /api/1
+RewriteRule ^api/([0-9]+)/?$ api/device.php?id=$1 [L,QSA]
+
+# Impedisce la navigazione delle cartelle interne.
+RewriteRule ^(includes)/ - [F,L]
