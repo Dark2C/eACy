@@ -210,10 +210,13 @@ if (is_post() && !$installed) {
                     last_seen_at DATETIME NOT NULL,
                     resolved_at DATETIME NULL,
                     resolved_by INT UNSIGNED NULL,
-                    PRIMARY KEY (id), UNIQUE KEY uq_anomaly_fingerprint (fingerprint), KEY idx_status_date (status, last_seen_at),
+                    deleted_at DATETIME NULL,
+                    deleted_by INT UNSIGNED NULL,
+                    PRIMARY KEY (id), UNIQUE KEY uq_anomaly_fingerprint (fingerprint), KEY idx_status_date (status, deleted_at, last_seen_at),
                     CONSTRAINT fk_anomaly_access_point FOREIGN KEY (access_point_id) REFERENCES ' . $table('access_points') . ' (id) ON DELETE SET NULL,
                     CONSTRAINT fk_anomaly_badge FOREIGN KEY (badge_id) REFERENCES ' . $table('badges') . ' (id) ON DELETE SET NULL,
-                    CONSTRAINT fk_anomaly_user FOREIGN KEY (resolved_by) REFERENCES ' . $table('users') . ' (id) ON DELETE SET NULL
+                    CONSTRAINT fk_anomaly_user FOREIGN KEY (resolved_by) REFERENCES ' . $table('users') . ' (id) ON DELETE SET NULL,
+                    CONSTRAINT fk_anomaly_deleted_user FOREIGN KEY (deleted_by) REFERENCES ' . $table('users') . ' (id) ON DELETE SET NULL
                 )' . $engine;
 
                 $queries[] = 'CREATE TABLE IF NOT EXISTS ' . $table('system_logs') . ' (

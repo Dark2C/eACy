@@ -18,8 +18,9 @@ if (is_post()) {
             db()->prepare('UPDATE ' . table_name('anomalies') . ' SET status="OPEN", resolved_at=NULL, resolved_by=NULL WHERE id=?')->execute([$id]);
             flash('success', 'Anomalia riaperta.');
         } else {
-            db()->prepare('DELETE FROM ' . table_name('anomalies') . ' WHERE id=?')->execute([$id]);
-            flash('success', 'Anomalia eliminata.');
+            db()->prepare('UPDATE ' . table_name('anomalies') . ' SET deleted_at=?, deleted_by=? WHERE id=?')
+                ->execute([date('Y-m-d H:i:s'), current_user()['id'], $id]);
+            flash('success', 'Anomalia eliminata e soppressa: eventuali replay saranno ignorati.');
         }
     }
     redirect('anomalies.php?status=' . urlencode($_GET['status'] ?? 'OPEN'));
@@ -34,7 +35,12 @@ $sql = 'SELECT a.*, ap.name AS access_point_name, du.full_name AS assignee_name,
         LEFT JOIN ' . table_name('directory_users') . ' du ON du.id = b.assignee_id
         LEFT JOIN ' . table_name('users') . ' u ON u.id = a.resolved_by';
 $params = [];
-if ($status !== 'ALL') { $sql .= ' WHERE a.status = ?'; $params[] = $status; }
+if ($status !== 'ALL') {
+    $sql .= ' WHERE a.deleted_at IS NULL AND a.status = ?';
+    $params[] = $status;
+} else {
+    $sql .= ' WHERE a.deleted_at IS NULL';
+}
 $sql .= ' ORDER BY a.last_seen_at DESC LIMIT 500';
 $stmt = db()->prepare($sql); $stmt->execute($params); $anomalies = $stmt->fetchAll();
 
@@ -66,7 +72,7 @@ require __DIR__ . '/includes/header.php';
             </div>
             <div class="d-flex gap-2 align-items-start">
                 <form method="post"><?= csrf_field() ?><input type="hidden" name="id" value="<?= (int)$anomaly['id'] ?>"><input type="hidden" name="action" value="<?= $anomaly['status'] === 'OPEN' ? 'resolve' : 'reopen' ?>"><button class="btn btn-sm btn-<?= $anomaly['status'] === 'OPEN' ? 'success' : 'outline-warning' ?>"><i class="bi bi-<?= $anomaly['status'] === 'OPEN' ? 'check2' : 'arrow-counterclockwise' ?>"></i> <?= $anomaly['status'] === 'OPEN' ? 'Risolvi' : 'Riapri' ?></button></form>
-                <form method="post"><?= csrf_field() ?><input type="hidden" name="id" value="<?= (int)$anomaly['id'] ?>"><input type="hidden" name="action" value="delete"><button class="btn btn-sm btn-outline-danger" data-confirm="Eliminare questa anomalia? Se l'evento è ancora nella coda del lettore, potrà ricomparire alla prossima sincronizzazione."><i class="bi bi-trash"></i></button></form>
+                <form method="post"><?= csrf_field() ?><input type="hidden" name="id" value="<?= (int)$anomaly['id'] ?>"><input type="hidden" name="action" value="delete"><button class="btn btn-sm btn-outline-danger" data-confirm="Eliminare questa anomalia? Rimarrà soppressa internamente e gli eventuali replay del lettore saranno ignorati."><i class="bi bi-trash"></i></button></form>
             </div>
         </div>
     </div></div>

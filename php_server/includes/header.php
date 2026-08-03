@@ -3,7 +3,7 @@ $pageTitle = $pageTitle ?? APP_NAME;
 $activeNav = $activeNav ?? '';
 $openAnomalies = 0;
 try {
-    $openAnomalies = (int)db()->query('SELECT COUNT(*) FROM ' . table_name('anomalies') . ' WHERE status = "OPEN"')->fetchColumn();
+    $openAnomalies = (int)db()->query('SELECT COUNT(*) FROM ' . table_name('anomalies') . ' WHERE status = "OPEN" AND deleted_at IS NULL')->fetchColumn();
 } catch (Throwable $e) {
     // Durante l'installazione le tabelle potrebbero non esistere ancora.
 }

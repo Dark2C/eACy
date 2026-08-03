@@ -162,7 +162,8 @@ function create_anomaly(
              first_seen_at, last_seen_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, "OPEN", ?, ?)
             ON DUPLICATE KEY UPDATE id = id';
-    db()->prepare($sql)->execute([
+    $insert = db()->prepare($sql);
+    $insert->execute([
         $accessPointId,
         $badgeId,
         $badgeUid,
@@ -173,6 +174,37 @@ function create_anomaly(
         $occurredAt,
         $occurredAt,
     ]);
+
+    // Il fail-safe scatta soltanto quando questa fingerprint viene registrata
+    // per la prima volta. Replay, anomalie risolte o eliminate logicamente
+    // restano deduplicati e non possono disabilitare nuovamente il badge.
+    if ($insert->rowCount() !== 1) {
+        return;
+    }
+
+    // Fail-safe: qualsiasi nuova anomalia associata a un badge ne revoca subito
+    // l'abilitazione. updated_at usa l'istante di rilevazione sul server (non
+    // occurredAt, che può riferirsi a un evento storico) affinché i lettori
+    // ricevano la revoca alla sincronizzazione successiva.
+    $disabledAt = date('Y-m-d H:i:s');
+    if ($badgeId !== null) {
+        $disableBadge = db()->prepare(
+            'UPDATE ' . table_name('badges') . '
+             SET enabled = 0, updated_at = ?
+             WHERE id = ? AND enabled = 1'
+        );
+        $disableBadge->execute([$disabledAt, $badgeId]);
+    } elseif ($badgeUid !== null) {
+        $normalizedBadgeUid = normalize_uid($badgeUid);
+        if ($normalizedBadgeUid !== null) {
+            $disableBadge = db()->prepare(
+                'UPDATE ' . table_name('badges') . '
+                 SET enabled = 0, updated_at = ?
+                 WHERE uid = ? AND enabled = 1'
+            );
+            $disableBadge->execute([$disabledAt, $normalizedBadgeUid]);
+        }
+    }
 }
 
 function level_class(string $level): string
