@@ -165,7 +165,7 @@ function protocol_non_monotonic_transitions(array $history): array
         $uid = (string)$record['uid'];
         $previous = $previousByUid[$uid] ?? null;
 
-        if ($previous !== null && (int)$record['counter'] < (int)$previous['counter']) {
+        if ($previous !== null && (int)$record['counter'] <= (int)$previous['counter']) {
             $transitions[] = [
                 'uid' => $uid,
                 'previous' => $previous,
